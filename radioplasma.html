@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Sistema Independiente RadioPlasma AV</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:monospace}
+  body{background:#020617;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;padding:12px;min-height:100vh}
+  .panel{width:100%;max-width:440px;background:rgba(10,18,34,0.95);border:1px solid #00ffcc;border-radius:12px;padding:14px;box-shadow:0 0 25px rgba(0,255,204,0.2)}
+  h1{font-size:15px;color:#00ffcc;text-align:center;margin-bottom:10px;letter-spacing:1px}
+  canvas{width:100%;height:180px;background:#010409;border:1px solid #38bdf8;border-radius:8px;display:block;margin-bottom:10px}
+  .telemetry{display:flex;justify-content:space-between;font-size:11px;color:#38bdf8;margin-bottom:10px;background:#091122;padding:6px 10px;border-radius:6px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+  button{background:#0284c7;color:#fff;border:none;border-radius:6px;padding:10px;font-size:12px;font-weight:bold;cursor:pointer}
+  .b-play{background:#059669} .b-wave{background:#7c3aed} .b-mic{background:#db2777} .b-rec{background:#d97706}
+  label{font-size:11px;color:#94a3b8;display:block;margin-bottom:4px}
+  input[type=range]{width:100%;height:28px;margin-bottom:10px}
+  input[type=text]{width:100%;background:#0f172a;color:#00ffcc;border:1px solid #334155;padding:8px;border-radius:6px;margin-bottom:6px;font-size:12px}
+  .log{max-height:90px;overflow-y:auto;font-size:11px;color:#94a3b8;margin-top:8px;border-top:1px solid #1e293b;padding-top:6px}
+</style>
+</head>
+<body>
+<div class="panel">
+  <h1>NÚCLEO INDEPENDIENTE RADIOPLASMA AV</h1>
+  <canvas id="visor" width="400" height="180"></canvas>
+  <div class="telemetry">
+    <span id="lblFreq">FREC: 432 Hz</span>
+    <span id="lblMode">MODO: SÍNTESIS</span>
+    <span id="lblWave">ONDA: SINE</span>
+  </div>
+  <div class="grid">
+    <button class="b-play" id="btnPlay">▶ PLAY AUDIO</button>
+    <button class="b-wave" id="btnWave">CAMBIAR ONDA</button>
+    <button class="b-mic" id="btnMic">🎙 MICRÓFONO REAL</button>
+    <button class="b-rec" id="btnRec">● GRABAR AUDIO</button>
+  </div>
+  <label for="rngFreq">SINTONIZADOR DE FRECUENCIA (60 Hz - 1200 Hz):</label>
+  <input type="range" id="rngFreq" min="60" max="1200" value="432">
+  <div id="playerBox" style="margin-bottom:10px"></div>
+  <input type="text" id="txtNota" placeholder="Guardar registro o frecuencia...">
+  <div class="grid">
+    <button id="btnSave" style="background:#0f766e">GUARDAR REGISTRO</button>
+    <button id="btnExp" style="background:#475569">DESCARGAR .TXT</button>
+  </div>
+  <div class="log" id="logBox"></div>
+</div>
+<script>
+(function(){
+  var cv = document.getElementById("visor"), ctx = cv.getContext("2d");
+  var actx = null, osc = null, gain = null, analyser = null, micStream = null, rec = null, chunks = [];
+  var playing = false, micOn = false, ondas = ["sine", "triangle", "square", "sawtooth"], wIdx = 0, freq = 432, ph = 0;
+
+  var lblFreq = document.getElementById("lblFreq"), lblMode = document.getElementById("lblMode"), lblWave = document.getElementById("lblWave");
+  var btnPlay = document.getElementById("btnPlay"), btnWave = document.getElementById("btnWave"), btnMic = document.getElementById("btnMic"), btnRec = document.getElementById("btnRec");
+  var rngFreq = document.getElementById("rngFreq"), playerBox = document.getElementById("playerBox");
+
+  function initAudio(){
+    if(!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if(!analyser){ analyser = actx.createAnalyser(); analyser.fftSize = 256; }
+  }
+
+  rngFreq.oninput = function(){
+    freq = parseInt(rngFreq.value);
+    lblFreq.textContent = "FREC: " + freq + " Hz";
+    if(osc) osc.frequency.value = freq;
+  };
+
+  btnWave.onclick = function(){
+    wIdx = (wIdx + 1) % ondas.length;
+    lblWave.textContent = "ONDA: " + ondas[wIdx].toUpperCase();
+    if(osc) osc.type = ondas[wIdx];
+  };
+
+  btnPlay.onclick = function(){
+    initAudio();
+    if(playing){ try{osc.stop();}catch(e){} osc = null; playing = false; btnPlay.textContent = "▶ PLAY AUDIO"; return; }
+    osc = actx.createOscillator(); gain = actx.createGain(); gain.gain.value = 0.12;
+    osc.type = ondas[wIdx]; osc.frequency.value = freq;
+    osc.connect(gain); gain.connect(analyser); analyser.connect(actx.destination);
+    osc.start(); playing = true; btnPlay.textContent = "❚❚ PAUSAR"; lblMode.textContent = "MODO: SÍNTESIS";
+  };
+
+  btnMic.onclick = async function(){
+    initAudio();
+    if(micOn){ micStream.getTracks().forEach(t=>t.stop()); micOn = false; btnMic.textContent = "🎙 MICRÓFONO REAL"; lblMode.textContent = "MODO: SÍNTESIS"; return; }
+    try{
+      micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+      var src = actx.createMediaStreamSource(micStream);
+      src.connect(analyser);
+      micOn = true; btnMic.textContent = "⏹ APAGAR MIC"; lblMode.textContent = "MODO: ENTORNO REAL";
+    }catch(e){ alert("Permite el acceso al micrófono en Safari para captar sonido real."); }
+  };
+  btnRec.onclick = function(){
+    if(!playing) btnPlay.click();
+    if(rec && rec.state === "recording"){ rec.stop(); btnRec.textContent = "● GRABAR AUDIO"; return; }
+    var dest = actx.createMediaStreamDestination(); gain.connect(dest);
+    chunks = []; rec = new MediaRecorder(dest.stream);
+    rec.ondataavailable = e => { if(e.data.size > 0) chunks.push(e.data); };
+    rec.onstop = () => {
+      var url = URL.createObjectURL(new Blob(chunks, {type:"audio/webm"}));
+      playerBox.innerHTML = '<audio controls src="' + url + '" style="width:100%;height:34px"></audio>';
+    };
+    rec.start(); btnRec.textContent = "■ DETENER GRAB.";
+  };
+
+  var logBox = document.getElementById("logBox"), txtNota = document.getElementById("txtNota");
+  function renderLog(){
+    var arr = JSON.parse(localStorage.getItem("radioplasma_log") || "[]");
+    logBox.innerHTML = arr.map(x => "<div>• " + x + "</div>").join("");
+  }
+  renderLog();
+  document.getElementById("btnSave").onclick = function(){
+    if(!txtNota.value.trim()) return;
+    var arr = JSON.parse(localStorage.getItem("radioplasma_log") || "[]");
+    arr.unshift("[" + freq + "Hz | " + ondas[wIdx] + "] " + txtNota.value.trim());
+    localStorage.setItem("radioplasma_log", JSON.stringify(arr.slice(0, 40)));
+    txtNota.value = ""; renderLog();
+  };
+  document.getElementById("btnExp").onclick = function(){
+    var arr = JSON.parse(localStorage.getItem("radioplasma_log") || "[]");
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([arr.join("\n") || "Sin registros"], {type:"text/plain"}));
+    a.download = "registro_radioplasma.txt"; a.click();
+  };
+
+  function loop(){
+    requestAnimationFrame(loop);
+    ctx.fillStyle = "rgba(1,4,9,0.28)"; ctx.fillRect(0, 0, 400, 180);
+    ctx.lineWidth = 2; ctx.strokeStyle = micOn ? "#f43f5e" : (playing ? "#00ffcc" : "#38bdf8");
+    ctx.beginPath();
+    if(analyser && (playing || micOn)){
+      var data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteTimeDomainData(data);
+      for(var i = 0; i < data.length; i++){
+        var x = (i / data.length) * 400, y = (data[i] / 128.0) * 90;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+    } else {
+      for(var x = 0; x < 400; x++){
+        var y = 90 + Math.sin(x * (freq / 5000) + ph) * 28 * Math.cos(x * 0.02 - ph * 0.3);
+        x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ph += 0.08;
+    }
+    ctx.stroke();
+  }
+  loop();
+})();
+</script>
+</body>
+</html>
